@@ -139,25 +139,44 @@ Open your browser at `http://localhost:8501`. Drag and drop any image or sketch 
 
 ## 💻 Terminal CLI Usage
 
-`nerdsight` also includes a fast command-line tool for developers who live in the terminal:
+`nerdsight` includes a fast, versatile command-line tool for developers:
 
 ```bash
-# Basic visual search
-python cli.py path/to/icon.png
+# 1. Search by Icon Name (instant search across 10,000+ icons)
+python cli.py --name "python"
+python cli.py --name "git" --family dev
 
-# Adjust visual weight and limit results
-python cli.py path/to/icon.png --alpha 0.8 --top 5
+# 2. Semantic Search by Concept / Meaning (powered by CLIP)
+python cli.py --text "database" --top 5
+python cli.py --text "speedometer"
+
+# 3. Browse / Show All Icons
+python cli.py --all --family fa --top 20
+
+# 4. Visual Search by Image / Screenshot
+python cli.py path/to/icon.png --alpha 0.7 --top 5
 
 # Terminal dark-mode print inversion + semantic boost
 python cli.py screenshot.png --invert --boost "git"
 
 # Output as JSON for scripts and pipelines
-python cli.py icon.png --json
+python cli.py --name "git" --json
 ```
 
-Example CLI Output:
+Example Name Search Output:
 ```text
-🔍 nerdsight search results for: sample.png
+🔍 nerdsight name search for: 'python'
+---------------------------------------------------------------------------
+#   Glyph  Unicode    Collection         Match Type       Name
+---------------------------------------------------------------------------
+1         \uec39     Codicons           Exact Match      nf-cod-python
+2         \ue73c     Devicons           Exact Match      nf-dev-python
+3         \ued1b     Font Awesome       Exact Match      nf-fa-python
+4         \ue235     Font Awesome Ext   Exact Match      nf-fae-python
+5         \ue606     Seti UI            Exact Match      nf-seti-python
+6   󰌠      \uf0320    Material Design    Word Match       nf-md-language_python
+---------------------------------------------------------------------------
+```
 ⚖️  Alpha: 0.65 (Visual: 65% / Semantic: 35%)
 -----------------------------------------------------------------
 #   Glyph  Similarity   Unicode     Name

@@ -1,4 +1,5 @@
 torch>=2.1.0
+torchvision
 sentence-transformers>=2.6.0
 Pillow>=10.2.0
 numpy>=1.26.0
