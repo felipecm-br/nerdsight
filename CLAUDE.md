@@ -25,6 +25,7 @@ python setup_assets.py
 # 2. Build or test the multimodal embeddings index
 python indexer.py --limit 300     # Fast smoke test / partial index
 python indexer.py                 # Full index (~10,000+ glyphs, ~5 min on CPU)
+python indexer.py --text-only     # Re-encode prompts only, after changing build_semantic_prompt()
 ```
 
 ### Running Applications
@@ -44,6 +45,7 @@ python cli.py --all --family fa --top 20
 
 # Terminal CLI: Visual Image Search
 python cli.py path/to/icon.png --alpha 0.7 --top 5
+python cli.py path/to/icon.png --rerank          # + two-stage VLM reranker (claude CLI; --vlm gemini)
 ```
 
 ---
@@ -57,8 +59,8 @@ python cli.py path/to/icon.png --alpha 0.7 --top 5
    - Semantic concept search and visual image search use `data/txt_embeddings.npy` and `data/img_embeddings.npy`.
 3. **Decoupled Embeddings Storage**:
    - Store visual (`img_embeddings.npy`) and textual (`txt_embeddings.npy`) matrices separately in `data/`.
-   - The query combines them via linear combination:
-     $$\vec{V}_{hybrid} = \text{normalize}\left(\alpha \cdot \vec{V}_{img} + (1 - \alpha) \cdot \vec{V}_{txt}\right)$$
+   - Image queries score each matrix separately, z-score each score vector across the catalog (the two modalities live on very different cosine scales), then weight them (`core.hybrid_scores`, default $\alpha = 0.7$):
+     $$S = \alpha \cdot z(\mathbf{E}_{img}\,\vec{q}) + (1 - \alpha) \cdot z(\mathbf{E}_{txt}\,\vec{q})$$
    - This allows instant, real-time $\alpha$ slider adjustments in `app.py` without model re-computation.
 4. **Font Independence**:
    - The Web UI injects `SymbolsNerdFontMono-Regular.ttf` as a base64 `@font-face` stylesheet. This guarantees that glyphs render natively on client browsers regardless of host OS fonts.

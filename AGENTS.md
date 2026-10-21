@@ -20,8 +20,8 @@ This repository contains **`nerdsight`**, a visual, name, and semantic search en
 ### 2. Architecture & Design Principles
 - **Multimodal Hybrid Embeddings Engine**:
   - `nerdsight` uses `clip-ViT-B-32` from OpenAI / OpenCLIP to map both glyph imagery and textual descriptions into a shared 512-dimensional vector space.
-  - Linear combination formula:
-    $$\vec{V}_{hybrid} = \text{normalize}\left(\alpha \cdot \vec{V}_{img} + (1 - \alpha) \cdot \vec{V}_{txt}\right)$$
+  - Score fusion (`core.hybrid_scores`): visual and semantic cosine scores are z-scored separately across the catalog, then weighted (default $\alpha = 0.7$):
+    $$S = \alpha \cdot z(\mathbf{E}_{img}\,\vec{q}) + (1 - \alpha) \cdot z(\mathbf{E}_{txt}\,\vec{q})$$
   - Embeddings are stored decoupled in `data/img_embeddings.npy` and `data/txt_embeddings.npy` to allow real-time $\alpha$ adjustments with zero model re-computation.
 - **Two-Tier Data Model (Catalog vs. Embeddings)**:
   - **Master Catalog (`assets/glyphnames.json`)**: Ground truth containing all 10,000+ Nerd Fonts glyphs (`name`, `char`, `code`, prefix). Exact/substring name search and the full catalog browser operate against this catalog with sub-millisecond latency.
@@ -40,9 +40,12 @@ This repository contains **`nerdsight`**, a visual, name, and semantic search en
 
 ### 3. File Map & Responsibilities
 - `setup_assets.py`: Downloads `glyphnames.json` and extracts `SymbolsNerdFontMono-Regular.ttf` from official GitHub releases.
-- `indexer.py`: Rasterizes font glyphs, synthesizes contextual semantic prompts, and computes visual + textual CLIP embeddings (supports `--limit`, `--batch-size`, `--model`).
+- `indexer.py`: Rasterizes font glyphs, synthesizes contextual semantic prompts, and computes visual + textual CLIP embeddings (supports `--limit`, `--batch-size`, `--model`, `--text-only`). Prompts are `a {outline|filled} icon of a {object nouns}` with style tokens stripped from the noun phrase.
+- `core.py`: Shared catalog loading, image preprocessing, and hybrid CLIP search logic. `app.py`, `cli.py`, and `mcp_server.py` all import from here — add new search logic here, not in the entry points.
+- `reranker.py`: Optional two-stage VLM reranker. Stage A sends the query image to a multimodal model for concept/style/keyword JSON; Stage B renders ~24 candidates (keyword name hits + local top-N) from the real font into a numbered contact sheet and has the model score them against the query. Backends: `claude -p` via subprocess (default) or the Gemini SDK. Prompts must never contain example concepts that could leak a test answer.
 - `app.py`: Streamlit web application providing Visual Search, Name & Semantic Text Search, and Catalog Browser with pagination.
 - `cli.py`: Fast terminal CLI supporting `--name`, `--text`, `--all`, and `<image>` input with live terminal glyph rendering.
+- `mcp_server.py`: MCP (Model Context Protocol) stdio server exposing `find_icon_by_name`, `find_icon_by_concept`, `find_icon_by_image`, `list_icon_families`, and `catalog_stats` as tools, so any MCP-capable coding-agent CLI (Claude Code, Codex CLI, etc.) can look up the best Nerd Font icon directly instead of shelling out to `cli.py`. Register it with, e.g., `claude mcp add nerdsight -- python /path/to/nerdsight/mcp_server.py`.
 - `requirements.txt`: Python package manifests.
 
 ---

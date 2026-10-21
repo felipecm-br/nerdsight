@@ -2,18 +2,20 @@
 """
 nerdsight - app.py
 Interactive Streamlit Web Application for Visual, Name & Semantic Nerd Fonts Search.
-Powered by Hybrid CLIP Multimodal Embeddings and Official Glyph Catalog.
+Powered by Hybrid CLIP Multimodal Embeddings, Official Glyph Catalog, and an optional
+two-stage multimodal VLM reranker (see reranker.py).
 """
 
 import base64
-import json
 import math
 import os
-import sys
+from typing import Optional
+
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image
 import streamlit as st
-from sentence_transformers import SentenceTransformer
+
+import core
 
 try:
     from streamlit_drawable_canvas import st_canvas
@@ -29,88 +31,28 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
-ASSETS_DIR = os.path.join(BASE_DIR, "assets")
-FONT_PATH = os.path.join(ASSETS_DIR, "SymbolsNerdFontMono-Regular.ttf")
-GLYPHNAMES_PATH = os.path.join(ASSETS_DIR, "glyphnames.json")
-IMG_EMB_PATH = os.path.join(DATA_DIR, "img_embeddings.npy")
-TXT_EMB_PATH = os.path.join(DATA_DIR, "txt_embeddings.npy")
-META_PATH = os.path.join(DATA_DIR, "metadata.json")
-
-# Mapping of prefix codes to friendly collection names
-PREFIX_MAP = {
-    "md": "Material Design",
-    "fa": "Font Awesome",
-    "dev": "Devicons",
-    "cod": "Codicons",
-    "oct": "GitHub Octicons",
-    "weather": "Weather",
-    "fae": "Font Awesome Extension",
-    "seti": "Seti UI",
-    "linux": "Linux Distros",
-    "custom": "Custom Tools",
-    "pl": "Powerline",
-    "ple": "Powerline Extra",
-    "pom": "Pomodoro",
-    "iec": "Power Symbols",
-    "indent": "Indentation",
-    "extra": "Extra Glyphs",
-}
+FONT_PATH = core.FONT_PATH
+PREFIX_MAP = core.PREFIX_MAP
 
 
 @st.cache_data
 def load_master_catalog():
     """Loads all 10,000+ Nerd Fonts glyphs directly from official glyphnames.json."""
-    if not os.path.exists(GLYPHNAMES_PATH):
-        return []
-
-    with open(GLYPHNAMES_PATH, "r", encoding="utf-8") as f:
-        raw_data = json.load(f)
-
-    raw_data.pop("METADATA", None)
-    catalog = []
-
-    for key, info in raw_data.items():
-        parts = key.split("-", 1)
-        prefix = parts[0] if len(parts) > 1 else "custom"
-        clean_name = parts[1] if len(parts) > 1 else key
-        family_name = PREFIX_MAP.get(prefix, prefix.capitalize())
-
-        catalog.append({
-            "name": f"nf-{key}",
-            "key": key,
-            "clean_name": clean_name,
-            "char": info["char"],
-            "code": info["code"],
-            "prefix": prefix,
-            "family": family_name,
-        })
-
-    return catalog
+    return core.load_master_catalog()
 
 
 @st.cache_resource
 def load_model_and_embeddings():
     """Loads CLIP model, precomputed embeddings, metadata, and font file into memory cache."""
-    has_embeddings = (
-        os.path.exists(IMG_EMB_PATH)
-        and os.path.exists(TXT_EMB_PATH)
-        and os.path.exists(META_PATH)
-    )
-
     model = None
     img_emb = None
     txt_emb = None
     emb_metadata = []
 
-    if has_embeddings:
+    if core.has_embeddings_index():
         try:
-            model = SentenceTransformer("clip-ViT-B-32")
-            img_emb = np.load(IMG_EMB_PATH)
-            txt_emb = np.load(TXT_EMB_PATH)
-            with open(META_PATH, "r", encoding="utf-8") as f:
-                emb_metadata = json.load(f)
+            model = core.get_model()
+            img_emb, txt_emb, emb_metadata = core.load_embeddings()
         except Exception as exc:
             st.warning(f"Não foi possível carregar os embeddings pré-calculados: {exc}")
 
@@ -125,7 +67,7 @@ def load_model_and_embeddings():
     return model, img_emb, txt_emb, emb_metadata, font_b64
 
 
-def inject_custom_css(font_b64: str | None):
+def inject_custom_css(font_b64: Optional[str]):
     """Injects custom CSS styling and embedded Nerd Font for native client-side glyph rendering."""
     font_face_rule = ""
     if font_b64:
@@ -193,6 +135,16 @@ def inject_custom_css(font_b64: str | None):
         font-weight: 600;
         letter-spacing: 0.5px;
     }}
+    .badge-vlm {{
+        background: #d2992222;
+        border: 1px solid #d2992266;
+        color: #e3b341;
+        padding: 3px 10px;
+        border-radius: 16px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+    }}
     .badge-family {{
         background: #21262d;
         border: 1px solid #30363d;
@@ -217,68 +169,6 @@ def inject_custom_css(font_b64: str | None):
     """, unsafe_allow_html=True)
 
 
-def preprocess_image(
-    image: Image.Image,
-    invert_colors: bool = False,
-    binarize: bool = True,
-    auto_crop: bool = True,
-    size: int = 128,
-) -> Image.Image:
-    """Preprocesses user images to align with canonical Nerd Font glyph embeddings."""
-    raw = image.convert("RGBA")
-
-    # 1. Flatten alpha transparency against solid white background
-    white_bg = Image.new("RGBA", raw.size, (255, 255, 255, 255))
-    flattened = Image.alpha_composite(white_bg, raw).convert("RGB")
-
-    # 2. Inversion for dark-mode screenshots (light icon on dark background)
-    if invert_colors:
-        flattened = ImageOps.invert(flattened)
-
-    # 3. Grayscale and high-contrast binarization
-    gray = flattened.convert("L")
-    if binarize:
-        gray = ImageOps.autocontrast(gray)
-        gray = gray.point(lambda p: 0 if p < 185 else 255, "L")
-        processed = gray.convert("RGB")
-    else:
-        processed = flattened
-
-    # 4. Auto-crop empty margins and center with canonical proportional padding
-    if auto_crop:
-        inv = ImageOps.invert(processed.convert("L"))
-        inv = inv.point(lambda p: 0 if p < 30 else 255)
-        bbox = inv.getbbox()
-        if bbox:
-            cropped = processed.crop(bbox)
-            target_box = int(size * 0.72)
-            cropped.thumbnail((target_box, target_box), Image.Resampling.LANCZOS)
-            canvas = Image.new("RGB", (size, size), (255, 255, 255))
-            ox = (size - cropped.width) // 2
-            oy = (size - cropped.height) // 2
-            canvas.paste(cropped, (ox, oy))
-            return canvas
-
-    return ImageOps.pad(processed, (size, size), color=(255, 255, 255))
-
-
-def search_hybrid_visual(
-    query_vec: np.ndarray,
-    img_emb: np.ndarray,
-    txt_emb: np.ndarray,
-    alpha: float,
-    top_k: int = 12,
-):
-    """Executes linear combination of visual and semantic indices for image search."""
-    hybrid_matrix = (alpha * img_emb) + ((1.0 - alpha) * txt_emb)
-    norms = np.linalg.norm(hybrid_matrix, axis=1, keepdims=True)
-    hybrid_matrix = hybrid_matrix / np.maximum(norms, 1e-12)
-
-    scores = np.dot(hybrid_matrix, query_vec)
-    top_indices = np.argsort(scores)[::-1][:top_k]
-    return top_indices, scores[top_indices]
-
-
 def render_icon_card(col, item: dict, badge_html: str):
     """Renders a single standardized icon card inside a Streamlit column."""
     with col:
@@ -290,7 +180,7 @@ def render_icon_card(col, item: dict, badge_html: str):
             <div class="unicode-tag">\\u{item['code']} &bull; {item.get('family', '')}</div>
         </div>
         """, unsafe_allow_html=True)
-        st.code(f"{item['char']} {item['name']}", language="text")
+        st.code(f"{item['char']}  {item['name']}  \\u{item['code']}", language="text")
 
 
 def main():
@@ -390,14 +280,10 @@ def main():
             # 2. Semantic Match via CLIP text embeddings
             if search_mode in ["🧠 Híbrido (Nome + Similaridade por IA)", "✨ Somente Semântica (Conceito por IA)"]:
                 if model is not None and txt_emb is not None and len(emb_metadata) > 0:
-                    prompt = f"an icon symbol of {query_clean}"
-                    q_vec = model.encode([prompt], convert_to_numpy=True)[0]
-                    q_vec = q_vec / np.linalg.norm(q_vec)
+                    with st.spinner("🧠 Calculando similaridade semântica (CLIP)..."):
+                        top_sem_indices, sem_scores = core.search_by_semantic_text(model, txt_emb, query_clean)
 
-                    scores = np.dot(txt_emb, q_vec)
-                    top_sem_indices = np.argsort(scores)[::-1]
-
-                    for idx in top_sem_indices:
+                    for idx, sim_score in zip(top_sem_indices, sem_scores):
                         if len(results) >= top_k_text * 2:
                             break
                         item_meta = emb_metadata[idx]
@@ -405,7 +291,6 @@ def main():
                         if name in seen_names:
                             continue
 
-                        # Find matching entry in master catalog for full details
                         cat_item = next((c for c in catalog if c["name"] == name), None)
                         if not cat_item:
                             cat_item = {
@@ -418,7 +303,7 @@ def main():
                         if filter_family and cat_item.get("family") != filter_family:
                             continue
 
-                        sim = float(scores[idx]) * 100
+                        sim = float(sim_score) * 100
                         badge = f'<span class="badge-semantic">Similaridade: {sim:.1f}%</span>'
                         results.append((cat_item, badge))
                         seen_names.add(name)
@@ -445,47 +330,83 @@ def main():
     # =========================================================================
     with tab_visual:
         st.subheader("🖼️ Encontrar Ícones Parecidos com uma Imagem")
-        st.markdown("Envie um print de tela, logotipo ou rascunho. O motor multimodal CLIP compara a **silhueta geométrica** e o **conceito**.")
+        st.markdown("Envie um print de tela, logotipo ou rascunho. O motor multimodal CLIP compara a **silhueta geométrica** e o **conceito**, com calibração z-score e opção de reranker VLM.")
 
-        # Sidebar parameters for visual search
-        with st.sidebar:
-            st.header("⚙️ Ajustes da Busca Visual")
-            alpha = st.slider(
-                "Equilíbrio Visual vs. Semântico (α)",
-                min_value=0.0,
-                max_value=1.0,
-                value=0.65,
-                step=0.05,
-                help="1.0 = Compara estritamente a silhueta/desenho.\n0.0 = Compara o significado da imagem.\n0.65 = Padrão recomendado.",
-            )
+        with st.expander("⚙️ Ajustes da Busca Visual", expanded=True):
+            col_alpha, col_topk = st.columns([3, 1])
+            with col_alpha:
+                alpha = st.slider(
+                    "Equilíbrio Visual vs. Semântico (α)",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=core.DEFAULT_ALPHA,
+                    step=0.05,
+                    help=f"α = {core.DEFAULT_ALPHA} dá {core.DEFAULT_ALPHA:.0%} de peso para a geometria/silhueta e o restante para a correspondência semântica (ambas em z-score).",
+                )
+            with col_topk:
+                top_k_visual = st.selectbox("Resultados:", [8, 12, 16, 24, 32, 48], index=1)
 
-            st.divider()
-            st.header("🛠️ Normalização da Imagem")
-            auto_crop = st.checkbox("Auto-Crop & Centralização", value=True, help="Remove bordas brancas e centraliza.")
-            binarize = st.checkbox("Forçar Silhueta P&B (Alto Contraste)", value=True, help="Converte imagens coloridas em silhueta limpa.")
-            invert_colors = st.checkbox("Inverter Cores (Print de Terminal Escuro)", value=False, help="Inverte fundo preto para fundo branco.")
-            top_k_visual = st.selectbox("Resultados Visuais:", [8, 12, 16, 24, 32, 48], index=1)
+            col_crop, col_bin, col_inv = st.columns(3)
+            with col_crop:
+                auto_crop = st.checkbox("Auto-Crop & Centralização", value=True, help="Remove bordas brancas e centraliza o glifo.")
+            with col_bin:
+                binarize = st.checkbox("Forçar Silhueta P&B (Alto Contraste)", value=True, help="Converte imagens coloridas em silhueta limpa.")
+            with col_inv:
+                invert_colors = st.checkbox("Inverter Cores (Print de Terminal Escuro)", value=False, help="Inverte fundo preto para fundo branco.")
 
-            st.divider()
             text_boost = st.text_input(
-                "Dica Semântica Extra (Boost Opcional):",
-                placeholder="Ex: git, folder, rust, database",
+                "Dica Semântica Extra (Boost Textual Opcional):",
+                placeholder="Ex: ghost, git, folder, database, rust...",
                 help="Mistura uma palavra-chave no vetor da imagem.",
+                key="visual_text_boost",
             )
+
+            # Two-stage VLM reranker (Stage A: análise da imagem, Stage B: contact sheet)
+            st.markdown("---")
+            use_vlm_reranker = st.toggle(
+                "✨ Ativar Reranker VLM (análise da imagem + verificação por contact sheet)",
+                value=False,
+                help="Stage A: o VLM descreve a imagem e gera palavras-chave. Stage B: os ~24 melhores candidatos são renderizados da fonte real numa grade e o VLM os pontua lado a lado com a sua imagem.",
+            )
+            vlm_backend_name = "claude"
+            vlm_api_key = ""
+            if use_vlm_reranker:
+                vlm_backend_name = st.radio(
+                    "Backend VLM:",
+                    ["claude", "gemini"],
+                    format_func=lambda b: {"claude": "Claude CLI (`claude -p`)", "gemini": "Gemini API (google-genai)"}[b],
+                    horizontal=True,
+                )
+                if vlm_backend_name == "gemini":
+                    env_key_present = bool(os.environ.get("GEMINI_API_KEY"))
+                    vlm_api_key = st.text_input(
+                        "Chave da API Gemini:" + (" (Detectada em GEMINI_API_KEY)" if env_key_present else ""),
+                        type="password",
+                        value=os.environ.get("GEMINI_API_KEY", ""),
+                        placeholder="AIzaSy...",
+                    )
+
+        if "visual_input_round" not in st.session_state:
+            st.session_state.visual_input_round = 0
 
         # Input modes: File Upload or Canvas Draw
         vtabs = ["📤 Upload de Imagem", "✏️ Desenhar Ícone (Canvas)"] if HAS_CANVAS else ["📤 Upload de Imagem"]
         active_vtabs = st.tabs(vtabs)
 
         query_pil = None
+        round_key = st.session_state.visual_input_round
 
         with active_vtabs[0]:
             uploaded_file = st.file_uploader(
                 "Arraste ou selecione uma imagem (PNG, JPG, SVG export, WEBP)",
                 type=["png", "jpg", "jpeg", "webp"],
+                key=f"visual_uploader_{round_key}",
             )
             if uploaded_file:
                 query_pil = Image.open(uploaded_file)
+                if st.button("🗑️ Limpar imagem"):
+                    st.session_state.visual_input_round += 1
+                    st.rerun()
 
         if HAS_CANVAS and len(active_vtabs) > 1:
             with active_vtabs[1]:
@@ -498,18 +419,21 @@ def main():
                     height=200,
                     width=200,
                     drawing_mode="freedraw",
-                    key="visual_canvas",
+                    key=f"visual_canvas_{round_key}",
                 )
                 if canvas_result.image_data is not None:
                     arr = canvas_result.image_data
                     if np.any(arr[:, :, :3] < 240):
                         query_pil = Image.fromarray(arr.astype("uint8"), "RGBA")
+                        if st.button("🗑️ Limpar desenho"):
+                            st.session_state.visual_input_round += 1
+                            st.rerun()
 
         if query_pil is not None:
             if model is None or img_emb is None:
                 st.error("⚠️ Embeddings visuais não encontrados! Execute `python setup_assets.py && python indexer.py`.")
             else:
-                processed_img = preprocess_image(
+                processed_img = core.preprocess_image(
                     query_pil,
                     invert_colors=invert_colors,
                     binarize=binarize,
@@ -524,40 +448,54 @@ def main():
                     st.markdown("**Normalizada (CLIP):**")
                     st.image(processed_img, width=128)
                 with col_stats:
-                    st.markdown("**Modo de Busca:**")
-                    st.markdown(f"- Peso Visual (Forma): **{alpha * 100:.0f}%**")
-                    st.markdown(f"- Peso Semântico (Conceito): **{(1 - alpha) * 100:.0f}%**")
+                    st.markdown("**Configuração da Busca:**")
+                    st.markdown(f"- Peso da Forma Visual ($S_{{vis}}$): **{alpha * 100:.0f}%**")
+                    st.markdown(f"- Peso do Conceito Semântico ($S_{{sem}}$): **{(1 - alpha) * 100:.0f}%**")
+                    st.markdown("- Calibração: **Z-Score independente por modalidade**")
                     if text_boost.strip():
                         st.markdown(f"- Dica de Texto Extra: *'{text_boost.strip()}'*")
 
-                query_vec = model.encode([processed_img], convert_to_numpy=True)[0]
-                query_vec = query_vec / np.linalg.norm(query_vec)
+                with st.spinner("🧠 Calculando similaridade híbrida calibrada (CLIP)..."):
+                    query_vec = core.encode_image_query(model, processed_img, boost_text=text_boost)
+                    final_scores = core.hybrid_scores(query_vec, img_emb, txt_emb, alpha)
 
-                if text_boost.strip():
-                    boost_prompt = f"icon symbol of {text_boost.strip()}"
-                    boost_vec = model.encode([boost_prompt], convert_to_numpy=True)[0]
-                    boost_vec = boost_vec / np.linalg.norm(boost_vec)
-                    query_vec = (0.75 * query_vec) + (0.25 * boost_vec)
-                    query_vec = query_vec / np.linalg.norm(query_vec)
+                rerank_result = None
+                if use_vlm_reranker:
+                    import reranker
 
-                top_indices, top_scores = search_hybrid_visual(
-                    query_vec,
-                    img_emb=img_emb,
-                    txt_emb=txt_emb,
-                    alpha=alpha,
-                    top_k=top_k_visual,
-                )
+                    backend = reranker.get_backend(vlm_backend_name, api_key=vlm_api_key)
+                    with st.spinner(f"✨ Reranker VLM ({backend.name}): analisando imagem e verificando contact sheet..."):
+                        try:
+                            rerank_result = reranker.rerank(
+                                query_pil, catalog, reranker.local_ranking_keys(final_scores, emb_metadata), backend
+                            )
+                        except Exception as exc:
+                            st.error(f"⚠️ Reranker VLM falhou ({backend.name}): {exc}. Exibindo ranking local.")
 
                 st.markdown("---")
-                st.subheader(f"🎯 Top {top_k_visual} Ícones Visualmente Parecidos")
+                cols = st.columns(4)
 
-                num_cols = 4
-                cols = st.columns(num_cols)
-                for idx_pos, (icon_idx, score) in enumerate(zip(top_indices, top_scores)):
-                    item_meta = emb_metadata[icon_idx]
-                    cat_item = next((c for c in catalog if c["name"] == item_meta["name"]), item_meta)
-                    badge = f'<span class="badge-semantic">{score * 100:.1f}% match</span>'
-                    render_icon_card(cols[idx_pos % num_cols], cat_item, badge)
+                if rerank_result:
+                    a = rerank_result.analysis
+                    st.success(
+                        f"🧠 **Stage A:** conceito **{a['primary_concept']}** · estilo **{a['visual_style'] or 'N/A'}** · "
+                        f"palavras-chave `{', '.join(a['candidate_keywords'])}`"
+                    )
+                    with st.expander("🖼️ Stage B: contact sheet enviado ao VLM"):
+                        st.image(rerank_result.contact_sheet)
+                    st.subheader(f"🎯 Top {top_k_visual} Ícones (reranqueados por VLM)")
+                    by_name = {c["name"]: c for c in catalog}
+                    for idx_pos, r in enumerate(rerank_result.ranked[:top_k_visual]):
+                        badge = f'<span class="badge-vlm" title="{r["reason"]}">VLM: {r["score"]:.0f}%</span>'
+                        render_icon_card(cols[idx_pos % 4], by_name[r["name"]], badge)
+                else:
+                    st.subheader(f"🎯 Top {top_k_visual} Ícones Mais Parecidos")
+                    top_indices = np.argsort(final_scores)[::-1][:top_k_visual]
+                    for idx_pos, icon_idx in enumerate(top_indices):
+                        item_meta = emb_metadata[icon_idx]
+                        cat_item = next((c for c in catalog if c["name"] == item_meta["name"]), item_meta)
+                        badge = f'<span class="badge-semantic">Match Híbrido: {final_scores[icon_idx] * 100:.1f}%</span>'
+                        render_icon_card(cols[idx_pos % 4], cat_item, badge)
         else:
             st.info("👆 Envie uma imagem acima para encontrar os ícones mais parecidos.")
 

@@ -11,32 +11,15 @@ import os
 import sys
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 
-ASSETS_DIR = "assets"
-DATA_DIR = "data"
-FONT_PATH = os.path.join(ASSETS_DIR, "SymbolsNerdFontMono-Regular.ttf")
-GLYPHNAMES_PATH = os.path.join(ASSETS_DIR, "glyphnames.json")
+import core
 
-# Contextual prefix mapping to provide semantic richness to CLIP
-PREFIX_MAP = {
-    "fa": "font awesome icon",
-    "fae": "font awesome extension symbol",
-    "md": "material design icon",
-    "mdi": "material design icon",
-    "dev": "developer programming technology logo",
-    "oct": "github octicon",
-    "cod": "vscode codicon",
-    "linux": "linux distro logo",
-    "custom": "custom utility icon",
-    "weather": "weather meteorological symbol",
-    "seti": "file type programming icon",
-    "pl": "powerline prompt symbol",
-    "ple": "powerline extra glyph",
-    "pom": "pomodoro productivity timer",
-    "iec": "power electronic symbol",
-}
+# Name tokens that describe drawing style rather than the depicted object. They are
+# stripped from the noun phrase and re-expressed once as "outline"/"filled", so
+# 'md-ghost_outline' and 'md-ghost' share the object noun and differ only in style.
+STYLE_TOKENS = {"outline", "outlined", "line", "o", "solid", "fill", "filled", "alt", "variant", "box", "small", "large", "thin", "bold"}
+OUTLINE_TOKENS = {"outline", "outlined", "line", "o"}
 
 
 def render_glyph(char: str, font: ImageFont.FreeTypeFont, size: int = 128) -> Image.Image:
@@ -60,13 +43,17 @@ def render_glyph(char: str, font: ImageFont.FreeTypeFont, size: int = 128) -> Im
 
 
 def build_semantic_prompt(raw_name: str) -> str:
-    """Transforms technical identifiers like 'dev-git_branch' into descriptive prompts."""
-    parts = raw_name.split("-", 1)
-    prefix = parts[0] if len(parts) > 1 else ""
-    clean_name = parts[1] if len(parts) > 1 else raw_name
-    clean_name = clean_name.replace("_", " ").replace("-", " ")
-    category_context = PREFIX_MAP.get(prefix, "symbol")
-    return f"a minimalist black and white icon symbol of {clean_name} ({category_context})"
+    """Transforms identifiers like 'md-ghost_outline' into 'a outline icon of a ghost'.
+
+    Keeps the object noun phrase free of style words (which otherwise dominate short
+    CLIP prompts) and states the style exactly once. Benchmarked against the previous
+    verbose templates: same or better ranks on image queries, cleaner text search.
+    """
+    prefix, _, rest = raw_name.partition("-")
+    words = [w for w in rest.replace("-", "_").split("_") if w]
+    nouns = [w for w in words if w not in STYLE_TOKENS]
+    style = "outline" if OUTLINE_TOKENS & set(words) else "filled"
+    return f"a {style} icon of a {' '.join(nouns) or prefix}"
 
 
 def normalize_l2(vecs: np.ndarray) -> np.ndarray:
@@ -75,30 +62,55 @@ def normalize_l2(vecs: np.ndarray) -> np.ndarray:
     return vecs / np.maximum(norms, 1e-12)
 
 
+def rebuild_text_embeddings(args):
+    """Re-encodes prompts for the glyphs already in metadata.json; image embeddings are untouched."""
+    if not core.has_embeddings_index():
+        print("❌ No existing index found. Run `python indexer.py` first.", file=sys.stderr)
+        sys.exit(1)
+
+    with open(core.META_PATH, "r", encoding="utf-8") as f:
+        metadata = json.load(f)
+    for item in metadata:
+        item["prompt"] = build_semantic_prompt(item["name"].removeprefix("nf-"))
+
+    model = core.get_model(args.model)
+    print(f"\n📝 Re-encoding {len(metadata)} semantic prompts...")
+    txt_emb = model.encode([m["prompt"] for m in metadata], batch_size=args.batch_size * 2, show_progress_bar=True, convert_to_numpy=True)
+    np.save(core.TXT_EMB_PATH, normalize_l2(txt_emb).astype(np.float32))
+    with open(core.META_PATH, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+    print(f"✅ Text embeddings rebuilt: {core.TXT_EMB_PATH}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Build nerdsight hybrid CLIP index.")
     parser.add_argument("--model", default="clip-ViT-B-32", help="SentenceTransformer model name")
     parser.add_argument("--batch-size", type=int, default=128, help="Batch size for embedding generation")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of glyphs to index (for quick testing/demo)")
+    parser.add_argument("--text-only", action="store_true", help="Only rebuild txt_embeddings.npy from the existing metadata (after prompt changes)")
     args = parser.parse_args()
 
-    if not os.path.exists(GLYPHNAMES_PATH) or not os.path.exists(FONT_PATH):
+    if args.text_only:
+        rebuild_text_embeddings(args)
+        return
+
+    if not os.path.exists(core.GLYPHNAMES_PATH) or not os.path.exists(core.FONT_PATH):
         print("❌ Missing assets! Please run `python setup_assets.py` first.", file=sys.stderr)
         sys.exit(1)
 
-    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(core.DATA_DIR, exist_ok=True)
 
-    print(f"📖 Loading glyph data from {GLYPHNAMES_PATH}...")
-    with open(GLYPHNAMES_PATH, "r", encoding="utf-8") as f:
+    print(f"📖 Loading glyph data from {core.GLYPHNAMES_PATH}...")
+    with open(core.GLYPHNAMES_PATH, "r", encoding="utf-8") as f:
         glyphs_data = json.load(f)
 
     glyphs_data.pop("METADATA", None)
 
-    print(f"🔤 Loading font {FONT_PATH}...")
-    font = ImageFont.truetype(FONT_PATH, int(128 * 0.72))
+    print(f"🔤 Loading font {core.FONT_PATH}...")
+    font = ImageFont.truetype(core.FONT_PATH, int(128 * 0.72))
 
     print(f"🤖 Loading multimodal model '{args.model}'...")
-    model = SentenceTransformer(args.model)
+    model = core.get_model(args.model)
 
     metadata = []
     images = []
@@ -137,9 +149,7 @@ def main():
     txt_emb = model.encode(prompts, batch_size=args.batch_size * 2, show_progress_bar=True, convert_to_numpy=True)
     txt_emb = normalize_l2(txt_emb).astype(np.float32)
 
-    img_out = os.path.join(DATA_DIR, "img_embeddings.npy")
-    txt_out = os.path.join(DATA_DIR, "txt_embeddings.npy")
-    meta_out = os.path.join(DATA_DIR, "metadata.json")
+    img_out, txt_out, meta_out = core.IMG_EMB_PATH, core.TXT_EMB_PATH, core.META_PATH
 
     print("\n💾 Saving index matrices and metadata to disk...")
     np.save(img_out, img_emb)

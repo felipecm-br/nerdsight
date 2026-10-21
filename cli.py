@@ -4,7 +4,8 @@ nerdsight - cli.py
 Command-line search tool for Nerd Fonts visual, name & semantic matching.
 Usage:
     # 1. Visual Search (by image or screenshot)
-    python cli.py image.png [--alpha 0.65] [--top 10] [--boost "git"]
+    python cli.py image.png [--alpha 0.7] [--top 10] [--boost "git"]
+    python cli.py image.png --rerank [--vlm claude|gemini]   # + two-stage VLM reranker
 
     # 2. Name Search (instant search across 10,000+ icons)
     python cli.py --name "git" [--family dev]
@@ -20,164 +21,51 @@ import argparse
 import json
 import os
 import sys
-import numpy as np
-from PIL import Image, ImageOps
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
-ASSETS_DIR = os.path.join(BASE_DIR, "assets")
-IMG_EMB_PATH = os.path.join(DATA_DIR, "img_embeddings.npy")
-TXT_EMB_PATH = os.path.join(DATA_DIR, "txt_embeddings.npy")
-META_PATH = os.path.join(DATA_DIR, "metadata.json")
-GLYPHNAMES_PATH = os.path.join(ASSETS_DIR, "glyphnames.json")
+import core
 
-PREFIX_MAP = {
-    "md": "Material Design",
-    "fa": "Font Awesome",
-    "dev": "Devicons",
-    "cod": "Codicons",
-    "oct": "GitHub Octicons",
-    "weather": "Weather",
-    "fae": "Font Awesome Extension",
-    "seti": "Seti UI",
-    "linux": "Linux Distros",
-    "custom": "Custom Tools",
-    "pl": "Powerline",
-    "ple": "Powerline Extra",
-    "pom": "Pomodoro",
-    "iec": "Power Symbols",
-    "indent": "Indentation",
-    "extra": "Extra Glyphs",
-}
+PREFIX_MAP = core.PREFIX_MAP
 
 
-def load_master_catalog():
-    """Loads all 10,000+ Nerd Fonts glyphs directly from official glyphnames.json."""
-    if not os.path.exists(GLYPHNAMES_PATH):
-        return []
+def run_rerank(args, raw_img, query_vec, img_emb, txt_emb, metadata, catalog):
+    import reranker
 
-    with open(GLYPHNAMES_PATH, "r", encoding="utf-8") as f:
-        raw_data = json.load(f)
+    scores = core.hybrid_scores(query_vec, img_emb, txt_emb, args.alpha)
+    local_keys = reranker.local_ranking_keys(scores, metadata)
+    backend = reranker.get_backend(args.vlm, args.vlm_model)
 
-    raw_data.pop("METADATA", None)
-    catalog = []
+    try:
+        result = reranker.rerank(raw_img, catalog, local_keys, backend)
+    except Exception as exc:
+        print(f"Error: VLM rerank failed ({backend.name}): {exc}", file=sys.stderr)
+        sys.exit(2)
 
-    for key, info in raw_data.items():
-        parts = key.split("-", 1)
-        prefix = parts[0] if len(parts) > 1 else "custom"
-        clean_name = parts[1] if len(parts) > 1 else key
-        family_name = PREFIX_MAP.get(prefix, prefix.capitalize())
+    if args.save_sheet:
+        result.contact_sheet.save(args.save_sheet)
 
-        catalog.append({
-            "name": f"nf-{key}",
-            "key": key,
-            "clean_name": clean_name,
-            "char": info["char"],
-            "code": info["code"],
-            "prefix": prefix,
-            "family": family_name,
-        })
+    ranked = result.ranked[:args.top]
+    if args.json:
+        print(json.dumps({
+            "backend": result.backend,
+            "analysis": result.analysis,
+            "candidates": result.candidates,
+            "results": [{k: v for k, v in r.items() if k != "key"} | {"rank": i} for i, r in enumerate(ranked, start=1)],
+        }, ensure_ascii=False, indent=2))
+        return
 
-    return catalog
-
-
-def preprocess_image(image_path: str, size: int = 128, invert: bool = False) -> Image.Image:
-    """Preprocesses local image for CLIP embedding."""
-    raw = Image.open(image_path).convert("RGBA")
-    white_bg = Image.new("RGBA", raw.size, (255, 255, 255, 255))
-    composited = Image.alpha_composite(white_bg, raw).convert("RGB")
-
-    if invert:
-        composited = ImageOps.invert(composited)
-
-    gray = composited.convert("L")
-    gray = ImageOps.autocontrast(gray)
-    gray = gray.point(lambda p: 0 if p < 185 else 255, "L")
-    processed = gray.convert("RGB")
-
-    inv = ImageOps.invert(processed.convert("L"))
-    inv = inv.point(lambda p: 0 if p < 30 else 255)
-    bbox = inv.getbbox()
-    if bbox:
-        cropped = processed.crop(bbox)
-        target_box = int(size * 0.72)
-        cropped.thumbnail((target_box, target_box), Image.Resampling.LANCZOS)
-        canvas = Image.new("RGB", (size, size), (255, 255, 255))
-        ox = (size - cropped.width) // 2
-        oy = (size - cropped.height) // 2
-        canvas.paste(cropped, (ox, oy))
-        return canvas
-
-    return ImageOps.pad(processed, (size, size), color=(255, 255, 255))
-
-
-def search_by_name(catalog, query: str, family_filter: str | None, limit: int):
-    """Searches catalog by exact or partial name match."""
-    q = query.strip().lower()
-    matches = []
-
-    for item in catalog:
-        if family_filter and family_filter.lower() not in item["prefix"].lower() and family_filter.lower() not in item["family"].lower():
-            continue
-
-        raw_k = item["key"].lower()
-        clean_n = item["clean_name"].lower()
-        code = item["code"].lower()
-
-        if q == raw_k or q == clean_n:
-            matches.append((100, item, "Exact Match"))
-        elif f"_{q}_" in f"_{clean_n}_" or f"-{q}-" in f"-{raw_k}-":
-            matches.append((95, item, "Word Match"))
-        elif raw_k.startswith(q) or clean_n.startswith(q):
-            matches.append((90, item, "Prefix Match"))
-        elif q in raw_k or q in code:
-            matches.append((85, item, "Substring Match"))
-
-    matches.sort(key=lambda x: x[0], reverse=True)
-    return matches[:limit]
-
-
-def search_by_semantic_text(query: str, family_filter: str | None, limit: int):
-    """Searches icons semantically using CLIP text encoder."""
-    if not (os.path.exists(TXT_EMB_PATH) and os.path.exists(META_PATH)):
-        print("Error: Embeddings index not found. Run `python setup_assets.py && python indexer.py` first.", file=sys.stderr)
-        sys.exit(1)
-
-    from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer("clip-ViT-B-32")
-
-    txt_emb = np.load(TXT_EMB_PATH)
-    with open(META_PATH, "r", encoding="utf-8") as f:
-        meta = json.load(f)
-
-    prompt = f"an icon symbol of {query.strip()}"
-    q_vec = model.encode([prompt], convert_to_numpy=True)[0]
-    q_vec = q_vec / np.linalg.norm(q_vec)
-
-    scores = np.dot(txt_emb, q_vec)
-    top_indices = np.argsort(scores)[::-1]
-
-    results = []
-    for idx in top_indices:
-        if len(results) >= limit:
-            break
-        item = meta[idx]
-        parts = item["name"].replace("nf-", "").split("-", 1)
-        pfx = parts[0] if len(parts) > 1 else ""
-        fam = PREFIX_MAP.get(pfx, "Nerd Font")
-
-        if family_filter and family_filter.lower() not in pfx.lower() and family_filter.lower() not in fam.lower():
-            continue
-
-        results.append({
-            "name": item["name"],
-            "char": item["char"],
-            "code": item["code"],
-            "family": fam,
-            "score": round(float(scores[idx]) * 100, 1),
-        })
-
-    return results
+    a = result.analysis
+    print(f"\n🔍 nerdsight VLM-reranked results for: {args.image}  [{result.backend}]")
+    print(f"🧠 Stage A: concept='{a['primary_concept']}' style='{a['visual_style']}' synonyms={a['synonyms']}")
+    print(f"   anatomy: {a['anatomy']}")
+    print(f"   keywords: {a['candidate_keywords']}")
+    print(f"🖼️  Stage B: {len(result.candidates)} candidates on contact sheet" + (f" -> {args.save_sheet}" if args.save_sheet else ""))
+    print("-" * 96)
+    print(f"{'#':<3} {'Glyph':<6} {'VLM':>5}  {'Local':>5}  {'Unicode':<9} {'Name':<30} Reason")
+    print("-" * 96)
+    for i, r in enumerate(ranked, start=1):
+        local = f"#{r['local_rank']}" if r["local_rank"] else "kw"
+        print(f"{i:<3} {r['char']:<6} {r['score']:>4.0f}%  {local:>5}  \\u{r['code']:<7} {r['name']:<30} {r['reason']}")
+    print("-" * 96)
 
 
 def main():
@@ -187,18 +75,22 @@ def main():
     parser.add_argument("-t", "--text", type=str, default=None, help="Search icons semantically by concept using CLIP")
     parser.add_argument("--all", action="store_true", help="List all cataloged icons")
     parser.add_argument("-f", "--family", type=str, default=None, help="Filter by collection/prefix (fa, dev, cod, md, etc.)")
-    parser.add_argument("-a", "--alpha", type=float, default=0.65, help="Visual vs semantic balance for image search (default: 0.65)")
+    parser.add_argument("-a", "--alpha", type=float, default=core.DEFAULT_ALPHA, help=f"Visual vs semantic balance for image search (default: {core.DEFAULT_ALPHA})")
     parser.add_argument("-k", "--top", type=int, default=12, help="Number of results to return (default: 12)")
     parser.add_argument("-b", "--boost", type=str, default="", help="Optional text hint concept for visual search")
     parser.add_argument("-i", "--invert", action="store_true", help="Invert dark-mode image colors")
     parser.add_argument("--json", action="store_true", help="Output results in JSON format")
+    parser.add_argument("-r", "--rerank", action="store_true", help="Rerank image results with a multimodal LLM (Stage A analysis + Stage B contact sheet)")
+    parser.add_argument("--vlm", choices=["claude", "gemini"], default="claude", help="VLM backend for --rerank (default: claude CLI)")
+    parser.add_argument("--vlm-model", default=None, help="Model for the VLM backend (default: sonnet / gemini-2.5-flash)")
+    parser.add_argument("--save-sheet", default=None, help="With --rerank: write the Stage B contact sheet PNG to this path")
     args = parser.parse_args()
 
-    catalog = load_master_catalog()
+    catalog = core.load_master_catalog()
 
     # Mode 1: Search by Name
     if args.name is not None:
-        matches = search_by_name(catalog, args.name, args.family, args.top)
+        matches = core.search_by_name(catalog, args.name, args.family, args.top)
         results = [
             {
                 "rank": idx + 1,
@@ -229,7 +121,34 @@ def main():
 
     # Mode 2: Semantic Text Search (CLIP)
     if args.text is not None:
-        sem_results = search_by_semantic_text(args.text, args.family, args.top)
+        if not core.has_embeddings_index():
+            print("Error: Embeddings index not found. Run `python setup_assets.py && python indexer.py` first.", file=sys.stderr)
+            sys.exit(1)
+
+        model = core.get_model()
+        _, txt_emb, meta = core.load_embeddings()
+        order, scores = core.search_by_semantic_text(model, txt_emb, args.text)
+
+        sem_results = []
+        for idx, score in zip(order, scores):
+            if len(sem_results) >= args.top:
+                break
+            item = meta[idx]
+            parts = item["name"].replace("nf-", "").split("-", 1)
+            pfx = parts[0] if len(parts) > 1 else ""
+            fam = PREFIX_MAP.get(pfx, "Nerd Font")
+
+            if args.family and args.family.lower() not in pfx.lower() and args.family.lower() not in fam.lower():
+                continue
+
+            sem_results.append({
+                "name": item["name"],
+                "char": item["char"],
+                "code": item["code"],
+                "family": fam,
+                "score": round(float(score) * 100, 1),
+            })
+
         results = [
             {
                 "rank": idx + 1,
@@ -302,45 +221,35 @@ def main():
             print(f"Error: Image '{args.image}' not found.", file=sys.stderr)
             sys.exit(1)
 
-        if not (os.path.exists(IMG_EMB_PATH) and os.path.exists(TXT_EMB_PATH) and os.path.exists(META_PATH)):
+        if not core.has_embeddings_index():
             print("Error: Index not built. Run `python setup_assets.py && python indexer.py` first.", file=sys.stderr)
             sys.exit(1)
 
-        from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer("clip-ViT-B-32")
+        from PIL import Image
 
-        img_emb = np.load(IMG_EMB_PATH)
-        txt_emb = np.load(TXT_EMB_PATH)
-        with open(META_PATH, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
+        model = core.get_model()
+        img_emb, txt_emb, metadata = core.load_embeddings()
 
-        proc_img = preprocess_image(args.image, invert=args.invert)
-        query_vec = model.encode([proc_img], convert_to_numpy=True)[0]
-        query_vec = query_vec / np.linalg.norm(query_vec)
+        raw_img = Image.open(args.image)
+        proc_img = core.preprocess_image(raw_img, invert_colors=args.invert)
+        query_vec = core.encode_image_query(model, proc_img, boost_text=args.boost)
 
-        if args.boost.strip():
-            boost_vec = model.encode([f"icon symbol of {args.boost.strip()}"], convert_to_numpy=True)[0]
-            boost_vec = boost_vec / np.linalg.norm(boost_vec)
-            query_vec = (0.75 * query_vec) + (0.25 * boost_vec)
-            query_vec = query_vec / np.linalg.norm(query_vec)
+        if args.rerank:
+            run_rerank(args, raw_img, query_vec, img_emb, txt_emb, metadata, catalog)
+            return
 
-        hybrid_matrix = (args.alpha * img_emb) + ((1.0 - args.alpha) * txt_emb)
-        norms = np.linalg.norm(hybrid_matrix, axis=1, keepdims=True)
-        hybrid_matrix = hybrid_matrix / np.maximum(norms, 1e-12)
-
-        scores = np.dot(hybrid_matrix, query_vec)
-        top_indices = np.argsort(scores)[::-1][:args.top]
-
+        top_indices, top_scores = core.search_hybrid_visual(
+            query_vec, img_emb=img_emb, txt_emb=txt_emb, alpha=args.alpha, top_k=args.top
+        )
         results = []
-        for rank, idx in enumerate(top_indices, start=1):
+        for rank, (idx, score) in enumerate(zip(top_indices, top_scores), start=1):
             item = metadata[idx]
-            score = float(scores[idx])
             results.append({
                 "rank": rank,
                 "name": item["name"],
                 "char": item["char"],
                 "code": item["code"],
-                "score": round(score * 100, 2),
+                "score": round(float(score) * 100, 2),
             })
 
         if args.json:

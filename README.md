@@ -28,7 +28,7 @@ The official [Nerd Fonts Cheat Sheet](https://www.nerdfonts.com/cheat-sheet) cat
 `nerdsight` uses `clip-ViT-B-32` from OpenAI / OpenCLIP to project both images and natural language text into a shared 512-dimensional vector space:
 
 1. **Visual Embedding ($\vec{V}_{img}$):** Generated from the centered 128×128 rasterization of the glyph from `SymbolsNerdFontMono-Regular.ttf`.
-2. **Semantic Description Embedding ($\vec{V}_{txt}$):** Generated from contextual prompt engineering applied to the glyph's name and family prefix (e.g., `dev-git_branch` $\rightarrow$ *"a minimalist black and white icon symbol of git branch (developer programming technology logo)"*).
+2. **Semantic Description Embedding ($\vec{V}_{txt}$):** Generated from the glyph name, with style tokens split from the object nouns (e.g., `md-ghost_outline` $\rightarrow$ *"a outline icon of a ghost"*, `dev-git_branch` $\rightarrow$ *"a filled icon of a git branch"*).
 
 ```
  ┌──────────────────────┐         ┌─────────────────────────┐
@@ -44,25 +44,26 @@ The official [Nerd Fonts Cheat Sheet](https://www.nerdfonts.com/cheat-sheet) cat
        Query Vector               V_img (512d)     V_txt (512d)
             │                         └────────┬────────┘
             │                                  │
-            │                  Linear Combination:
-            │                  V_hybrid = α · V_img + (1 - α) · V_txt
-            │                                  │
             └───────────────┬──────────────────┘
                             ▼
-                  [ Cosine Similarity ]
+            [ Cosine vs V_img ]  [ Cosine vs V_txt ]
+                            ▼
+          S = α · z(vis) + (1 - α) · z(sem)
                             ▼
               Top K Ranked Nerd Font Icons
 ```
 
 ### The Hybrid Formula
 
-During query time, `nerdsight` blends the visual and semantic matrices dynamically without requiring re-computation:
+At query time, `nerdsight` scores the query against both matrices and fuses the scores. Image-to-image and image-to-text cosines live on very different scales (~0.6–0.95 vs ~0.15–0.35), so each score vector is z-scored across the catalog first:
 
-$$\vec{V}_{hybrid} = \text{normalize}\left(\alpha \cdot \vec{V}_{img} + (1 - \alpha) \cdot \vec{V}_{txt}\right)$$
+$$S = \alpha \cdot z(\mathbf{E}_{img}\,\vec{q}) + (1 - \alpha) \cdot z(\mathbf{E}_{txt}\,\vec{q})$$
 
 - **$\alpha = 1.0$ (Pure Visual):** Matches strictly by geometric silhouette and line shapes.
 - **$\alpha = 0.0$ (Pure Semantic):** Matches conceptually by object meaning and category.
-- **$\alpha = 0.65$ *(Default)*:** The optimal balance for real-world icons and sketches.
+- **$\alpha = 0.7$ *(Default)*:** Chosen by benchmark (exact-shape recall vs. concept neighbours).
+
+For hard queries, `--rerank` adds a two-stage multimodal reranker (`reranker.py`): a VLM names the concept and style, then verifies ~24 candidates rendered from the real font on a numbered contact sheet.
 
 ---
 
@@ -177,7 +178,7 @@ Example Name Search Output:
 6   󰌠      \uf0320    Material Design    Word Match       nf-md-language_python
 ---------------------------------------------------------------------------
 ```
-⚖️  Alpha: 0.65 (Visual: 65% / Semantic: 35%)
+⚖️  Alpha: 0.70 (Visual: 70% / Semantic: 30%)
 -----------------------------------------------------------------
 #   Glyph  Similarity   Unicode     Name
 -----------------------------------------------------------------
