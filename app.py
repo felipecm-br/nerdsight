@@ -2,8 +2,7 @@
 """
 nerdsight - app.py
 Interactive Streamlit Web Application for Visual, Name & Semantic Nerd Fonts Search.
-Powered by Hybrid CLIP Multimodal Embeddings, Official Glyph Catalog, and an optional
-two-stage multimodal VLM reranker (see reranker.py).
+Powered by Hybrid CLIP Multimodal Embeddings and the Official Glyph Catalog.
 """
 
 import base64
@@ -129,16 +128,6 @@ def inject_custom_css(font_b64: Optional[str]):
         background: #1f6feb22;
         border: 1px solid #388bfd44;
         color: #58a6ff;
-        padding: 3px 10px;
-        border-radius: 16px;
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 0.5px;
-    }}
-    .badge-vlm {{
-        background: #d2992222;
-        border: 1px solid #d2992266;
-        color: #e3b341;
         padding: 3px 10px;
         border-radius: 16px;
         font-size: 11px;
@@ -330,7 +319,7 @@ def main():
     # =========================================================================
     with tab_visual:
         st.subheader("🖼️ Encontrar Ícones Parecidos com uma Imagem")
-        st.markdown("Envie um print de tela, logotipo ou rascunho. O motor multimodal CLIP compara a **silhueta geométrica** e o **conceito**, com calibração z-score e opção de reranker VLM.")
+        st.markdown("Envie um print de tela, logotipo ou rascunho. O motor multimodal CLIP compara a **silhueta geométrica** e o **conceito**, com calibração z-score.")
 
         with st.expander("⚙️ Ajustes da Busca Visual", expanded=True):
             col_alpha, col_topk = st.columns([3, 1])
@@ -360,31 +349,6 @@ def main():
                 help="Mistura uma palavra-chave no vetor da imagem.",
                 key="visual_text_boost",
             )
-
-            # Two-stage VLM reranker (Stage A: análise da imagem, Stage B: contact sheet)
-            st.markdown("---")
-            use_vlm_reranker = st.toggle(
-                "✨ Ativar Reranker VLM (análise da imagem + verificação por contact sheet)",
-                value=False,
-                help="Stage A: o VLM descreve a imagem e gera palavras-chave. Stage B: os ~24 melhores candidatos são renderizados da fonte real numa grade e o VLM os pontua lado a lado com a sua imagem.",
-            )
-            vlm_backend_name = "claude"
-            vlm_api_key = ""
-            if use_vlm_reranker:
-                vlm_backend_name = st.radio(
-                    "Backend VLM:",
-                    ["claude", "gemini"],
-                    format_func=lambda b: {"claude": "Claude CLI (`claude -p`)", "gemini": "Gemini API (google-genai)"}[b],
-                    horizontal=True,
-                )
-                if vlm_backend_name == "gemini":
-                    env_key_present = bool(os.environ.get("GEMINI_API_KEY"))
-                    vlm_api_key = st.text_input(
-                        "Chave da API Gemini:" + (" (Detectada em GEMINI_API_KEY)" if env_key_present else ""),
-                        type="password",
-                        value=os.environ.get("GEMINI_API_KEY", ""),
-                        placeholder="AIzaSy...",
-                    )
 
         if "visual_input_round" not in st.session_state:
             st.session_state.visual_input_round = 0
@@ -459,43 +423,15 @@ def main():
                     query_vec = core.encode_image_query(model, processed_img, boost_text=text_boost)
                     final_scores = core.hybrid_scores(query_vec, img_emb, txt_emb, alpha)
 
-                rerank_result = None
-                if use_vlm_reranker:
-                    import reranker
-
-                    backend = reranker.get_backend(vlm_backend_name, api_key=vlm_api_key)
-                    with st.spinner(f"✨ Reranker VLM ({backend.name}): analisando imagem e verificando contact sheet..."):
-                        try:
-                            rerank_result = reranker.rerank(
-                                query_pil, catalog, reranker.local_ranking_keys(final_scores, emb_metadata), backend
-                            )
-                        except Exception as exc:
-                            st.error(f"⚠️ Reranker VLM falhou ({backend.name}): {exc}. Exibindo ranking local.")
-
                 st.markdown("---")
+                st.subheader(f"🎯 Top {top_k_visual} Ícones Mais Parecidos")
                 cols = st.columns(4)
-
-                if rerank_result:
-                    a = rerank_result.analysis
-                    st.success(
-                        f"🧠 **Stage A:** conceito **{a['primary_concept']}** · estilo **{a['visual_style'] or 'N/A'}** · "
-                        f"palavras-chave `{', '.join(a['candidate_keywords'])}`"
-                    )
-                    with st.expander("🖼️ Stage B: contact sheet enviado ao VLM"):
-                        st.image(rerank_result.contact_sheet)
-                    st.subheader(f"🎯 Top {top_k_visual} Ícones (reranqueados por VLM)")
-                    by_name = {c["name"]: c for c in catalog}
-                    for idx_pos, r in enumerate(rerank_result.ranked[:top_k_visual]):
-                        badge = f'<span class="badge-vlm" title="{r["reason"]}">VLM: {r["score"]:.0f}%</span>'
-                        render_icon_card(cols[idx_pos % 4], by_name[r["name"]], badge)
-                else:
-                    st.subheader(f"🎯 Top {top_k_visual} Ícones Mais Parecidos")
-                    top_indices = np.argsort(final_scores)[::-1][:top_k_visual]
-                    for idx_pos, icon_idx in enumerate(top_indices):
-                        item_meta = emb_metadata[icon_idx]
-                        cat_item = next((c for c in catalog if c["name"] == item_meta["name"]), item_meta)
-                        badge = f'<span class="badge-semantic">Match Híbrido: {final_scores[icon_idx] * 100:.1f}%</span>'
-                        render_icon_card(cols[idx_pos % 4], cat_item, badge)
+                top_indices = np.argsort(final_scores)[::-1][:top_k_visual]
+                for idx_pos, icon_idx in enumerate(top_indices):
+                    item_meta = emb_metadata[icon_idx]
+                    cat_item = next((c for c in catalog if c["name"] == item_meta["name"]), item_meta)
+                    badge = f'<span class="badge-semantic">Match Híbrido: {final_scores[icon_idx] * 100:.1f}%</span>'
+                    render_icon_card(cols[idx_pos % 4], cat_item, badge)
         else:
             st.info("👆 Envie uma imagem acima para encontrar os ícones mais parecidos.")
 

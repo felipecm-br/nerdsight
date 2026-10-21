@@ -5,7 +5,6 @@ Command-line search tool for Nerd Fonts visual, name & semantic matching.
 Usage:
     # 1. Visual Search (by image or screenshot)
     python cli.py image.png [--alpha 0.7] [--top 10] [--boost "git"]
-    python cli.py image.png --rerank [--vlm claude|gemini]   # + two-stage VLM reranker
 
     # 2. Name Search (instant search across 10,000+ icons)
     python cli.py --name "git" [--family dev]
@@ -27,47 +26,6 @@ import core
 PREFIX_MAP = core.PREFIX_MAP
 
 
-def run_rerank(args, raw_img, query_vec, img_emb, txt_emb, metadata, catalog):
-    import reranker
-
-    scores = core.hybrid_scores(query_vec, img_emb, txt_emb, args.alpha)
-    local_keys = reranker.local_ranking_keys(scores, metadata)
-    backend = reranker.get_backend(args.vlm, args.vlm_model)
-
-    try:
-        result = reranker.rerank(raw_img, catalog, local_keys, backend)
-    except Exception as exc:
-        print(f"Error: VLM rerank failed ({backend.name}): {exc}", file=sys.stderr)
-        sys.exit(2)
-
-    if args.save_sheet:
-        result.contact_sheet.save(args.save_sheet)
-
-    ranked = result.ranked[:args.top]
-    if args.json:
-        print(json.dumps({
-            "backend": result.backend,
-            "analysis": result.analysis,
-            "candidates": result.candidates,
-            "results": [{k: v for k, v in r.items() if k != "key"} | {"rank": i} for i, r in enumerate(ranked, start=1)],
-        }, ensure_ascii=False, indent=2))
-        return
-
-    a = result.analysis
-    print(f"\n🔍 nerdsight VLM-reranked results for: {args.image}  [{result.backend}]")
-    print(f"🧠 Stage A: concept='{a['primary_concept']}' style='{a['visual_style']}' synonyms={a['synonyms']}")
-    print(f"   anatomy: {a['anatomy']}")
-    print(f"   keywords: {a['candidate_keywords']}")
-    print(f"🖼️  Stage B: {len(result.candidates)} candidates on contact sheet" + (f" -> {args.save_sheet}" if args.save_sheet else ""))
-    print("-" * 96)
-    print(f"{'#':<3} {'Glyph':<6} {'VLM':>5}  {'Local':>5}  {'Unicode':<9} {'Name':<30} Reason")
-    print("-" * 96)
-    for i, r in enumerate(ranked, start=1):
-        local = f"#{r['local_rank']}" if r["local_rank"] else "kw"
-        print(f"{i:<3} {r['char']:<6} {r['score']:>4.0f}%  {local:>5}  \\u{r['code']:<7} {r['name']:<30} {r['reason']}")
-    print("-" * 96)
-
-
 def main():
     parser = argparse.ArgumentParser(description="nerdsight - Visual, Name & Semantic CLI for Nerd Fonts.")
     parser.add_argument("image", nargs="?", default=None, help="Path to input image for visual search")
@@ -80,10 +38,6 @@ def main():
     parser.add_argument("-b", "--boost", type=str, default="", help="Optional text hint concept for visual search")
     parser.add_argument("-i", "--invert", action="store_true", help="Invert dark-mode image colors")
     parser.add_argument("--json", action="store_true", help="Output results in JSON format")
-    parser.add_argument("-r", "--rerank", action="store_true", help="Rerank image results with a multimodal LLM (Stage A analysis + Stage B contact sheet)")
-    parser.add_argument("--vlm", choices=["claude", "gemini"], default="claude", help="VLM backend for --rerank (default: claude CLI)")
-    parser.add_argument("--vlm-model", default=None, help="Model for the VLM backend (default: sonnet / gemini-2.5-flash)")
-    parser.add_argument("--save-sheet", default=None, help="With --rerank: write the Stage B contact sheet PNG to this path")
     args = parser.parse_args()
 
     catalog = core.load_master_catalog()
@@ -233,10 +187,6 @@ def main():
         raw_img = Image.open(args.image)
         proc_img = core.preprocess_image(raw_img, invert_colors=args.invert)
         query_vec = core.encode_image_query(model, proc_img, boost_text=args.boost)
-
-        if args.rerank:
-            run_rerank(args, raw_img, query_vec, img_emb, txt_emb, metadata, catalog)
-            return
 
         top_indices, top_scores = core.search_hybrid_visual(
             query_vec, img_emb=img_emb, txt_emb=txt_emb, alpha=args.alpha, top_k=args.top

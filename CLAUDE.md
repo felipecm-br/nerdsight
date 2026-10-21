@@ -45,7 +45,6 @@ python cli.py --all --family fa --top 20
 
 # Terminal CLI: Visual Image Search
 python cli.py path/to/icon.png --alpha 0.7 --top 5
-python cli.py path/to/icon.png --rerank          # + two-stage VLM reranker (claude CLI; --vlm gemini)
 ```
 
 ---

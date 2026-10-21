@@ -63,8 +63,6 @@ $$S = \alpha \cdot z(\mathbf{E}_{img}\,\vec{q}) + (1 - \alpha) \cdot z(\mathbf{E
 - **$\alpha = 0.0$ (Pure Semantic):** Matches conceptually by object meaning and category.
 - **$\alpha = 0.7$ *(Default)*:** Chosen by benchmark (exact-shape recall vs. concept neighbours).
 
-For hard queries, `--rerank` adds a two-stage multimodal reranker (`reranker.py`): a VLM names the concept and style, then verifies ~24 candidates rendered from the real font on a numbered contact sheet.
-
 ---
 
 ## 🛠️ Image Normalization Pipeline

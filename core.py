@@ -2,7 +2,7 @@
 """
 nerdsight - core.py
 Shared catalog loading, image preprocessing, and hybrid CLIP search logic
-used by app.py, cli.py, and mcp_server.py. No Streamlit/MCP-specific code here.
+used by app.py and cli.py. No Streamlit-specific code here.
 """
 
 import json
