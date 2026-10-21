@@ -79,6 +79,7 @@ def main():
     parser = argparse.ArgumentParser(description="Build nerdsight hybrid CLIP index.")
     parser.add_argument("--model", default="clip-ViT-B-32", help="SentenceTransformer model name")
     parser.add_argument("--batch-size", type=int, default=128, help="Batch size for embedding generation")
+    parser.add_argument("--limit", type=int, default=None, help="Limit number of glyphs to index (for quick testing/demo)")
     args = parser.parse_args()
 
     if not os.path.exists(GLYPHNAMES_PATH) or not os.path.exists(FONT_PATH):
@@ -123,6 +124,10 @@ def main():
             "code": code,
             "prompt": prompt,
         })
+
+        if args.limit and len(images) >= args.limit:
+            print(f"⏱️ Limit reached ({args.limit} glyphs). Proceeding to embedding generation.")
+            break
 
     print(f"\n🧠 Generating visual embeddings for {len(images)} icons...")
     img_emb = model.encode(images, batch_size=args.batch_size, show_progress_bar=True, convert_to_numpy=True)
