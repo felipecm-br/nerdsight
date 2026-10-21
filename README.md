@@ -1,0 +1,182 @@
+# 🔍 nerdsight
+
+> **Visual & Semantic Search Engine for [Nerd Fonts](https://www.nerdfonts.com) Icons**  
+> Find glyphs, CSS classes (`nf-*`), and unicode codepoints from screenshots, drawings, or logos using **Hybrid CLIP Multimodal Embeddings**.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://python.org)
+[![Streamlit App](https://img.shields.io/badge/Streamlit-1.32+-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io)
+[![Sentence Transformers](https://img.shields.io/badge/Sentence--Transformers-CLIP--ViT--B--32-orange)](https://www.sbert.net)
+
+---
+
+## 💡 The Problem
+
+The official [Nerd Fonts Cheat Sheet](https://www.nerdfonts.com/cheat-sheet) catalogs over **10,000 glyphs**, but finding the right icon when you only have:
+- A screenshot of a terminal prompt or status bar
+- A corporate logo (e.g., GitLab fox, Docker whale, Rust crab)
+- A rough hand-drawn sketch or mockup
+
+... is nearly impossible by keyword search alone unless you already know the exact maintainer name (`nf-oct-*`, `nf-fa-*`, `nf-dev-*`, `nf-md-*`). Web-scraping the cheat sheet is also fragile because glyphs render dynamically on-demand via virtual DOM.
+
+**`nerdsight`** solves this by downloading the official font and mapping directly from the source repository, rendering every glyph to canonical canonical bitmaps, and building a **dual multimodal index** combining visual geometry and contextual semantics.
+
+---
+
+## 🧠 Multimodal Hybrid Fusion Architecture
+
+`nerdsight` uses `clip-ViT-B-32` from OpenAI / OpenCLIP to project both images and natural language text into a shared 512-dimensional vector space:
+
+1. **Visual Embedding ($\vec{V}_{img}$):** Generated from the centered 128×128 rasterization of the glyph from `SymbolsNerdFontMono-Regular.ttf`.
+2. **Semantic Description Embedding ($\vec{V}_{txt}$):** Generated from contextual prompt engineering applied to the glyph's name and family prefix (e.g., `dev-git_branch` $\rightarrow$ *"a minimalist black and white icon symbol of git branch (developer programming technology logo)"*).
+
+```
+ ┌──────────────────────┐         ┌─────────────────────────┐
+ │ Query Image / Sketch │         │ Nerd Fonts Glyph Source │
+ └──────────┬───────────┘         └────────────┬────────────┘
+            │                                  │
+    [ Preprocessing ]                 ┌────────┴────────┐
+   (Auto-crop, Invert,                │                 │
+    Binarize, Pad)               [Render 128x128]  [Prefix Prompt]
+            │                         │                 │
+      [CLIP Vision]              [CLIP Vision]    [CLIP Language]
+            │                         │                 │
+       Query Vector               V_img (512d)     V_txt (512d)
+            │                         └────────┬────────┘
+            │                                  │
+            │                  Linear Combination:
+            │                  V_hybrid = α · V_img + (1 - α) · V_txt
+            │                                  │
+            └───────────────┬──────────────────┘
+                            ▼
+                  [ Cosine Similarity ]
+                            ▼
+              Top K Ranked Nerd Font Icons
+```
+
+### The Hybrid Formula
+
+During query time, `nerdsight` blends the visual and semantic matrices dynamically without requiring re-computation:
+
+$$\vec{V}_{hybrid} = \text{normalize}\left(\alpha \cdot \vec{V}_{img} + (1 - \alpha) \cdot \vec{V}_{txt}\right)$$
+
+- **$\alpha = 1.0$ (Pure Visual):** Matches strictly by geometric silhouette and line shapes.
+- **$\alpha = 0.0$ (Pure Semantic):** Matches conceptually by object meaning and category.
+- **$\alpha = 0.65$ *(Default)*:** The optimal balance for real-world icons and sketches.
+
+---
+
+## 🛠️ Image Normalization Pipeline
+
+To match user uploads against pristine font glyphs, `nerdsight` includes an automated preprocessing pipeline:
+
+1. **Alpha Flattening:** Composites PNG alpha channels against an opaque solid white canvas.
+2. **Dark-Mode Inversion:** Inverts terminal prints (white-on-black) to font-compatible black-on-white.
+3. **Adaptive Binarization:** Otsu-inspired thresholding converts multi-color artwork into high-contrast silhouettes.
+4. **Auto-Crop & Proportional Padding:** Detects bounding box boundaries and scales the glyph to occupy exactly 72% of the canvas with centered margins, mirroring the official font metrics.
+
+---
+
+## 📂 Project Structure
+
+```text
+nerdsight/
+├── assets/
+│   ├── glyphnames.json                # Official mapping (name, char, hex code)
+│   └── SymbolsNerdFontMono-Regular.ttf# Official symbol font
+├── data/
+│   ├── img_embeddings.npy             # Visual matrix (N, 512) in float32
+│   ├── txt_embeddings.npy             # Semantic matrix (N, 512) in float32
+│   └── metadata.json                  # Icon names, characters, codepoints
+├── app.py                             # Interactive Streamlit Web UI
+├── cli.py                             # Fast command-line terminal search
+├── indexer.py                         # Glyph renderer and CLIP embedding builder
+├── setup_assets.py                    # Official asset fetcher (GitHub release)
+├── requirements.txt                   # Python dependencies
+└── README.md
+```
+
+---
+
+## 🚀 Quickstart
+
+### 1. Clone & Environment Setup
+
+```bash
+git clone https://github.com/felipecm-br/nerdsight.git
+cd nerdsight/main  # or cd nerdsight
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 2. Download Official Assets
+
+Downloads `glyphnames.json` and extracts `SymbolsNerdFontMono-Regular.ttf` from the latest Nerd Fonts release archive (~30 seconds):
+
+```bash
+python setup_assets.py
+```
+
+### 3. Build Embeddings Index
+
+Renders all glyphs and generates decoupled visual & semantic matrices (~2 to 4 minutes on CPU, faster on CUDA/Metal):
+
+```bash
+python indexer.py
+```
+
+### 4. Launch the Web Application
+
+```bash
+streamlit run app.py
+```
+
+Open your browser at `http://localhost:8501`. Drag and drop any image or sketch to find matching icons!
+
+---
+
+## 💻 Terminal CLI Usage
+
+`nerdsight` also includes a fast command-line tool for developers who live in the terminal:
+
+```bash
+# Basic visual search
+python cli.py path/to/icon.png
+
+# Adjust visual weight and limit results
+python cli.py path/to/icon.png --alpha 0.8 --top 5
+
+# Terminal dark-mode print inversion + semantic boost
+python cli.py screenshot.png --invert --boost "git"
+
+# Output as JSON for scripts and pipelines
+python cli.py icon.png --json
+```
+
+Example CLI Output:
+```text
+🔍 nerdsight search results for: sample.png
+⚖️  Alpha: 0.65 (Visual: 65% / Semantic: 35%)
+-----------------------------------------------------------------
+#   Glyph  Similarity   Unicode     Name
+-----------------------------------------------------------------
+1         94.2%        \ue725      nf-dev-git_branch
+2         91.1%        \uf418      nf-oct-git_branch
+3         86.4%        \uf1d3      nf-fa-git
+-----------------------------------------------------------------
+```
+
+---
+
+## ⚡ Future Roadmap & Browser-Only Deployment
+
+- **Zero-Backend Deployment (Transformers.js + WebGPU):** Quantize the precomputed matrices to `float16` (~10MB per matrix) and run `Xenova/clip-vit-base-patch32` entirely inside the client's browser using WebAssembly / WebGPU on GitHub Pages or Cloudflare Pages.
+- **Multi-Scale Augmentation:** Average embeddings across multiple stroke widths during indexing for enhanced sketch recognition.
+
+---
+
+## 📄 License
+
+MIT © [Felipe Miranda](https://github.com/felipecm-br)

@@ -1,0 +1,28 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Downloaded font and generated data matrices
+# Run `python setup_assets.py` and `python indexer.py` to regenerate
+assets/*
+!assets/.gitkeep
+data/*
+!data/.gitkeep
+
+# IDE / OS specific files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Streamlit local settings
+.streamlit/
