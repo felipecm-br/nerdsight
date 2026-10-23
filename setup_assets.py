@@ -13,8 +13,11 @@ import zipfile
 import requests
 from tqdm import tqdm
 
-ASSETS_DIR = "assets"
-DATA_DIR = "data"
+import core
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ASSETS_DIR = os.path.join(BASE_DIR, "assets")
+DATA_DIR = os.path.join(BASE_DIR, "data")
 
 GLYPHNAMES_URL = "https://raw.githubusercontent.com/ryanoasis/nerd-fonts/master/glyphnames.json"
 SYMBOLS_ZIP_URL = "https://github.com/ryanoasis/nerd-fonts/releases/latest/download/NerdFontsSymbolsOnly.zip"
@@ -92,6 +95,7 @@ def main():
     try:
         download_glyphnames()
         download_and_extract_font()
+        core.ensure_static_font()
         print("\n✨ Assets setup complete! You can now run `python indexer.py` to build embeddings.")
     except Exception as exc:
         print(f"\n❌ Error during asset setup: {exc}", file=sys.stderr)

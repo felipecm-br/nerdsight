@@ -7,6 +7,7 @@ used by app.py and cli.py. No Streamlit-specific code here.
 
 import json
 import os
+import shutil
 from typing import Optional
 
 import numpy as np
@@ -20,6 +21,8 @@ GLYPHNAMES_PATH = os.path.join(ASSETS_DIR, "glyphnames.json")
 IMG_EMB_PATH = os.path.join(DATA_DIR, "img_embeddings.npy")
 TXT_EMB_PATH = os.path.join(DATA_DIR, "txt_embeddings.npy")
 META_PATH = os.path.join(DATA_DIR, "metadata.json")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+STATIC_FONT_PATH = os.path.join(STATIC_DIR, os.path.basename(FONT_PATH))
 
 # Mapping of prefix codes to friendly collection names
 PREFIX_MAP = {
@@ -72,6 +75,16 @@ def load_master_catalog() -> list[dict]:
     return catalog
 
 
+def ensure_static_font() -> bool:
+    """Mirrors the symbols font into static/ so Streamlit serves it as a cacheable file."""
+    if not os.path.exists(FONT_PATH):
+        return os.path.exists(STATIC_FONT_PATH)
+    if not os.path.exists(STATIC_FONT_PATH) or os.path.getsize(STATIC_FONT_PATH) != os.path.getsize(FONT_PATH):
+        os.makedirs(STATIC_DIR, exist_ok=True)
+        shutil.copyfile(FONT_PATH, STATIC_FONT_PATH)
+    return True
+
+
 def has_embeddings_index() -> bool:
     return (
         os.path.exists(IMG_EMB_PATH)
@@ -106,6 +119,13 @@ def flatten_alpha(image: Image.Image) -> Image.Image:
     raw = image.convert("RGBA")
     white_bg = Image.new("RGBA", raw.size, (255, 255, 255, 255))
     return Image.alpha_composite(white_bg, raw).convert("RGB")
+
+
+def has_dark_border(image: Image.Image) -> bool:
+    """True when the image frame is mostly dark, i.e. a light glyph on a terminal background."""
+    gray = np.asarray(flatten_alpha(image).convert("L"), dtype=np.float32)
+    edge = np.concatenate([gray[0], gray[-1], gray[:, 0], gray[:, -1]])
+    return float(edge.mean()) < 96
 
 
 def preprocess_image(

@@ -1,6 +1,29 @@
 # Plan: Deploy nerdsight as a free Hugging Face Static Space
 
-**Status:** proposal · **Option:** A (browser-side inference) · **Date:** 2026-10-21
+**Status:** implemented (2026-10-22) · **Option:** A (browser-side inference) · **Date:** 2026-10-21
+
+## Outcome
+
+- **Phase 0 gate passed.** The JS preprocessing (`web/js/preprocess.js`, a port of Pillow's `Resample.c`
+  and `Reduce.c`) is pixel-exact with `core.preprocess_image` on all five fixtures. The CLIP processor
+  resize is PIL bicubic (torch bicubic differs by up to 0.4 in normalized units), so canvas scaling is
+  never used.
+- **Dtype decision (measured, `NERDSIGHT_DTYPE=vision:text npm test`):**
+
+  | Variant | Text cosine | Glyph cosine (300) | Rankings | First download |
+  |---|---|---|---|---|
+  | fp32 | 1.0000 | 1.0000 | identical | ~580 MB |
+  | **fp16 (chosen)** | 1.0000 | 0.9994 mean | near-tie swaps; Python #1 always in top 3 | ~290 MB |
+  | q8 | 0.84–0.89 | 0.92 mean | concept rankings broken | ~150 MB |
+
+  q8 is rejected outright. Switching to fp32 is one line in `export_web.py` (`WEB_DTYPES`).
+- `cru.png` is not in the repo, so `export_web.py --golden` generates synthetic fixtures covering each
+  preprocessing branch (dark terminal capture, transparent PNG, large noisy image via `reduce()`, tiny
+  image, wide image through `pad()`).
+- **Open decisions resolved:** all three UI languages ship (strings exported from `i18n.py`); Space id
+  defaults to `<hf-user>/nerdsight` (`--repo` overrides); the Streamlit app stays for local use; deploys
+  are manual (`python deploy_space.py`). The sketch canvas shipped in v1. The Space card has no
+  `emoji:` (no-emoji rule); Hugging Face shows its default.
 
 ## Goal
 

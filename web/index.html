@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>nerdsight</title>
+  <meta name="description" content="Find the right Nerd Fonts glyph by name, concept or image. CLIP runs in your browser.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23161a21'/%3E%3Cpath d='M4 16s4.5-8 12-8 12 8 12 8-4.5 8-12 8S4 16 4 16z' fill='none' stroke='%23f2b84b' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='3.5' fill='%23f2b84b'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+  <link rel="preload" href="fonts/SymbolsNerdFontMono-Regular.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="preload" href="data/catalog.json" as="fetch" crossorigin>
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="ui/nerdsight.css">
+  <link rel="stylesheet" href="style.css">
+  <script src="ui/nerdsight.js" defer></script>
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <main class="ns-page">
+    <header class="ns-header">
+      <div class="ns-brand">
+        <span class="ns-logo" aria-hidden="true">&#xf06d0;</span>
+        <div>
+          <h1 class="ns-title">nerdsight</h1>
+          <p class="ns-tagline" data-i18n="tagline"></p>
+        </div>
+      </div>
+      <dl class="ns-stats">
+        <div><dt data-i18n="stat_glyphs"></dt><dd id="stat-glyphs">-</dd></div>
+        <div><dt data-i18n="stat_families"></dt><dd id="stat-families">-</dd></div>
+        <div><dt data-i18n="stat_index"></dt><dd id="stat-index" class="ns-status" data-ok="false">-</dd></div>
+      </dl>
+    </header>
+
+    <div class="ns-toolbar">
+      <div class="ns-seg" role="radiogroup" id="view" data-i18n-label="view_label">
+        <button type="button" role="radio" data-value="search"><span class="ns-ic" aria-hidden="true">&#xf0349;</span><span data-i18n="view_search"></span></button>
+        <button type="button" role="radio" data-value="visual"><span class="ns-ic" aria-hidden="true">&#xf02e9;</span><span data-i18n="view_visual"></span></button>
+        <button type="button" role="radio" data-value="catalog"><span class="ns-ic" aria-hidden="true">&#xf0570;</span><span data-i18n="view_catalog"></span></button>
+      </div>
+      <div class="ns-seg ns-seg-quiet" role="radiogroup" id="lang" data-i18n-label="language"></div>
+    </div>
+
+    <p class="ns-banner" id="banner" hidden></p>
+
+    <!-- ------------------------------------------------------------ search -->
+    <section id="view-search" class="ns-view" hidden>
+      <label class="ns-search">
+        <span class="ns-ic" aria-hidden="true">&#xf0349;</span>
+        <input id="q" type="search" autocomplete="off" spellcheck="false" data-i18n-label="search_label" data-i18n-placeholder="search_placeholder">
+      </label>
+      <div class="ns-controls">
+        <div class="ns-field ns-grow">
+          <span class="ns-field-label" data-i18n="match" data-i18n-title="mode_help"></span>
+          <div class="ns-seg" role="radiogroup" id="mode" data-i18n-label="match"></div>
+        </div>
+        <div class="ns-field ns-grow">
+          <span class="ns-field-label" id="family-label" data-i18n="family"></span>
+          <div class="ns-picker" id="family" data-labelledby="family-label"></div>
+        </div>
+        <div class="ns-field">
+          <span class="ns-field-label" id="top-k-label" data-i18n="results"></span>
+          <div class="ns-picker" id="top-k" data-labelledby="top-k-label"></div>
+        </div>
+      </div>
+      <div id="search-idle" class="ns-stack">
+        <div class="ns-pills" id="suggestions"><span class="ns-field-label" data-i18n="try"></span></div>
+        <p class="ns-hint" data-i18n-html="search_hint"></p>
+      </div>
+      <div id="search-results" class="ns-stack" hidden></div>
+    </section>
+
+    <!-- ------------------------------------------------------------ visual -->
+    <section id="view-visual" class="ns-view" hidden>
+      <div class="ns-split">
+        <div class="ns-stack">
+          <div class="ns-seg" role="radiogroup" id="source" data-i18n-label="source_label">
+            <button type="button" role="radio" data-value="upload"><span class="ns-ic" aria-hidden="true">&#xf0552;</span><span data-i18n="source_upload"></span></button>
+            <button type="button" role="radio" data-value="draw"><span class="ns-ic" aria-hidden="true">&#xf03eb;</span><span data-i18n="source_draw"></span></button>
+          </div>
+          <div id="drop" class="ns-drop" tabindex="0" role="button" data-i18n-label="upload_label">
+            <span class="ns-ic ns-drop-ic" aria-hidden="true">&#xf0552;</span>
+            <strong data-i18n="web_drop_title"></strong>
+            <span data-i18n="web_drop_body"></span>
+            <span class="ns-btn" data-i18n="web_browse"></span>
+            <input id="file" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+          </div>
+          <div id="draw" class="ns-draw" hidden>
+            <canvas id="sketch" width="240" height="240" data-i18n-label="web_draw_label"></canvas>
+            <button type="button" class="ns-btn" id="sketch-clear"><span class="ns-ic" aria-hidden="true">&#xf0a7a;</span><span data-i18n="web_draw_clear"></span></button>
+          </div>
+          <label class="ns-field">
+            <span class="ns-field-label" data-i18n="boost_label" data-i18n-title="boost_help"></span>
+            <input id="boost" type="text" autocomplete="off" placeholder="ghost, git, database">
+          </label>
+          <label class="ns-field">
+            <span class="ns-field-row"><span class="ns-field-label" data-i18n="alpha_label" id="alpha-label"></span><output id="alpha-out" for="alpha"></output></span>
+            <input id="alpha" type="range" min="0" max="1" step="0.05">
+          </label>
+          <details class="ns-details">
+            <summary><span class="ns-ic" aria-hidden="true">&#xf062e;</span><span data-i18n="preprocess"></span></summary>
+            <label class="ns-toggle"><input type="checkbox" id="opt-crop" checked><span data-i18n="crop" data-i18n-title="crop_help"></span></label>
+            <label class="ns-toggle"><input type="checkbox" id="opt-binarize" checked><span data-i18n="binarize" data-i18n-title="binarize_help"></span></label>
+            <label class="ns-toggle"><input type="checkbox" id="opt-invert"><span data-i18n="invert" data-i18n-title="invert_help"></span></label>
+          </details>
+        </div>
+        <div class="ns-stack">
+          <div id="visual-empty" class="ns-empty">
+            <h3 data-i18n="visual_empty_title"></h3>
+            <p data-i18n="visual_empty_body"></p>
+          </div>
+          <div id="visual-query" class="ns-query" hidden>
+            <figure><canvas id="preview-original" class="ns-thumb"></canvas><figcaption data-i18n="original"></figcaption></figure>
+            <figure><canvas id="preview-processed" class="ns-thumb" width="128" height="128"></canvas><figcaption data-i18n="model_view"></figcaption></figure>
+            <div class="ns-query-info">
+              <p id="weights"></p>
+              <p class="ns-caption" data-i18n="zscore_note"></p>
+              <p class="ns-caption" id="boost-note" hidden></p>
+              <button type="button" class="ns-btn" id="remove-image"><span class="ns-ic" aria-hidden="true">&#xf0156;</span><span data-i18n="web_remove"></span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="visual-results" class="ns-stack" hidden></div>
+    </section>
+
+    <!-- ----------------------------------------------------------- catalog -->
+    <section id="view-catalog" class="ns-view" hidden>
+      <div class="ns-pills" id="catalog-families" role="group" data-i18n-label="family" data-i18n-title="catalog_family_help"></div>
+      <div class="ns-controls">
+        <label class="ns-search ns-grow">
+          <span class="ns-ic" aria-hidden="true">&#xf0232;</span>
+          <input id="catalog-filter" type="search" autocomplete="off" spellcheck="false" data-i18n-label="filter_label" data-i18n-placeholder="filter_placeholder">
+        </label>
+        <div class="ns-picker" id="per-page"></div>
+      </div>
+      <div id="catalog-results" class="ns-stack"></div>
+    </section>
+
+    <footer class="ns-footer">
+      <span><span class="ns-ic" aria-hidden="true">&#xf033e;</span> <span data-i18n="web_local"></span></span>
+      <span id="footer-icons"></span>
+      <a href="https://github.com/ryanoasis/nerd-fonts/blob/master/license-audit.md" data-i18n="web_footer_licenses"></a>
+      <a href="https://github.com/felipecm-br/nerdsight" data-i18n="web_footer_source"></a>
+    </footer>
+  </main>
+</body>
+</html>

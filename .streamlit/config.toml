@@ -1,0 +1,35 @@
+# nerdsight theme. app.py reads these colors back with st.get_option() to
+# build its CSS custom properties, so this file is the single source of truth.
+
+[server]
+# Serves static/ at app/static/. The symbols font is mirrored there so the
+# browser downloads and caches it once instead of receiving a base64 copy on
+# every rerun.
+enableStaticServing = true
+
+[client]
+toolbarMode = "minimal"
+
+[theme]
+base = "dark"
+primaryColor = "#f2b84b"
+backgroundColor = "#0f1217"
+secondaryBackgroundColor = "#161a21"
+textColor = "#e7eaf0"
+borderColor = "#2a313c"
+linkColor = "#f2b84b"
+codeTextColor = "#e7eaf0"
+codeBackgroundColor = "#161a21"
+showWidgetBorder = true
+baseRadius = "8px"
+baseFontSize = 15
+paddingTop = "1.5rem"
+headingFontWeights = [600, 600, 600, 500, 500, 500]
+# NerdSymbols is a fallback in both stacks, so glyphs render inside native
+# widgets (pills, selects, code blocks) as well as in the custom grid.
+font = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap, NerdSymbols, sans-serif"
+codeFont = "'Geist Mono':https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap, NerdSymbols, monospace"
+
+[[theme.fontFaces]]
+family = "NerdSymbols"
+url = "app/static/SymbolsNerdFontMono-Regular.ttf"

@@ -5,7 +5,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://python.org)
-[![Streamlit App](https://img.shields.io/badge/Streamlit-1.32+-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io)
+[![Streamlit App](https://img.shields.io/badge/Streamlit-1.66+-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io)
 [![Sentence Transformers](https://img.shields.io/badge/Sentence--Transformers-CLIP--ViT--B--32-orange)](https://www.sbert.net)
 
 ---
@@ -88,6 +88,15 @@ nerdsight/
 │   ├── txt_embeddings.npy             # Semantic matrix (N, 512) in float32
 │   └── metadata.json                  # Icon names, characters, codepoints
 ├── app.py                             # Interactive Streamlit Web UI
+├── i18n.py                            # UI strings: en (default), pt-BR, es
+├── ui/                                # Web UI stylesheet (tokens) and client script
+├── static/                            # Served at app/static/ (font mirror, not committed)
+├── .streamlit/config.toml             # Theme and static serving config
+├── web/                               # Static front end for the Hugging Face Space (no build step)
+│   ├── index.html, style.css, js/     # Browser port of app.py + core.py (transformers.js CLIP)
+│   └── tests/                         # Parity tests against the Python pipeline
+├── export_web.py                      # Writes web/dist: f16 index, catalog, font, theme, strings
+├── deploy_space.py                    # Uploads web/dist to a free Hugging Face Static Space
 ├── cli.py                             # Fast command-line terminal search
 ├── indexer.py                         # Glyph renderer and CLIP embedding builder
 ├── setup_assets.py                    # Official asset fetcher (GitHub release)
@@ -132,7 +141,22 @@ python indexer.py
 streamlit run app.py
 ```
 
-Open your browser at `http://localhost:8501`. Drag and drop any image or sketch to find matching icons!
+Open your browser at `http://localhost:8501`. Search by name or concept, drop in an image or sketch, or browse the catalog. Click any glyph to copy it as the raw character, its `nf-` name, or a Python, Bash, HTML or CSS escape. Press `/` to jump to the search box and `C` to copy the focused glyph. The UI is in English by default, with Português (BR) and Español one click away. Searches and the language live in the URL, so `?q=rocket&mode=concept&lang=es` can be shared.
+
+### 5. Publish on Hugging Face Spaces (free)
+
+Free Hugging Face accounts can only create **Static** Spaces, so the public version runs entirely in the visitor's browser: the index is exported once as float16 files (~22 MB), and [transformers.js](https://huggingface.co/docs/transformers.js) encodes queries with `Xenova/clip-vit-base-patch32`, the ONNX export of the same CLIP weights. Name search and the catalog work immediately; the concept and image models download on first use and stay in the browser cache.
+
+```bash
+python export_web.py                      # build web/dist (also run by deploy_space.py)
+python -m http.server -d web/dist 8000    # preview at http://localhost:8000
+
+hf auth login                             # once, with a write token
+python deploy_space.py                    # creates/updates <your-user>/nerdsight
+python deploy_space.py --repo org/name    # or any other Space id
+```
+
+The browser reproduces the Python pipeline exactly, and the tests check it: `python export_web.py --golden` writes reference results from PyTorch, then `cd web && npm install && npm test` compares preprocessing (pixel-exact with PIL), name search, and CLIP rankings. `npm run test:browser` runs the same checks in headless Chromium against the built site.
 
 ---
 
@@ -188,9 +212,9 @@ Example Name Search Output:
 
 ---
 
-## ⚡ Future Roadmap & Browser-Only Deployment
+## ⚡ Future Roadmap
 
-- **Zero-Backend Deployment (Transformers.js + WebGPU):** Quantize the precomputed matrices to `float16` (~10MB per matrix) and run `Xenova/clip-vit-base-patch32` entirely inside the client's browser using WebAssembly / WebGPU on GitHub Pages or Cloudflare Pages.
+- **WebGPU backend** for the browser build (WASM today); the same `web/dist` also works on GitHub Pages or Cloudflare Pages.
 - **Multi-Scale Augmentation:** Average embeddings across multiple stroke widths during indexing for enhanced sketch recognition.
 
 ---

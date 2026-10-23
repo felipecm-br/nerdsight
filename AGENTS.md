@@ -28,7 +28,7 @@ This repository contains **`nerdsight`**, a visual, name, and semantic search en
   - **Embeddings Index (`data/*.npy`, `data/metadata.json`)**: Precomputed vector representations used for visual image search and semantic concept queries.
 - **Client Font Independence**:
   - Never assume the client browser or machine has Nerd Fonts installed locally.
-  - The Web UI injects `SymbolsNerdFontMono-Regular.ttf` as a base64-encoded `@font-face` rule in custom CSS to ensure native, crisp rendering across all browsers.
+  - The Web UI serves `SymbolsNerdFontMono-Regular.ttf` from `static/` via Streamlit static serving and registers it as the `NerdSymbols` font face in `.streamlit/config.toml`, so the browser downloads and caches it once. `core.ensure_static_font()` mirrors it from `assets/`.
 - **Query Image Preprocessing Pipeline**:
   - Alpha channel flattening against solid white canvas.
   - Dark-mode terminal print inversion (white-on-black $\rightarrow$ black-on-white).
@@ -45,6 +45,9 @@ This repository contains **`nerdsight`**, a visual, name, and semantic search en
 - `app.py`: Streamlit web application providing Visual Search, Name & Semantic Text Search, and Catalog Browser with pagination.
 - `cli.py`: Fast terminal CLI supporting `--name`, `--text`, `--all`, and `<image>` input with live terminal glyph rendering.
 - Coding agents should call `python cli.py ... --json` (name, `--text`, image path, `--all --family`) to look up icons.
+- `export_web.py`: Exports the catalog, float16 embeddings, font, theme and UI strings to `web/dist/` for the static front end; `--golden` also writes reference results for the parity tests.
+- `deploy_space.py`: Uploads `web/dist/` to a free Hugging Face Static Space (`--repo`, `--dry-run`, `--skip-export`).
+- `web/`: No-build static front end (browser port of `app.py` + `core.py`, CLIP via transformers.js). `js/preprocess.js` must stay pixel-exact with `core.preprocess_image`.
 - `requirements.txt`: Python package manifests.
 
 ---
@@ -58,6 +61,9 @@ Before finalizing any changes:
    - Test syntax & imports: `python -m py_compile app.py cli.py indexer.py setup_assets.py`
 2. **Path Robustness**:
    - Ensure all scripts use directory-relative paths (`BASE_DIR = os.path.dirname(os.path.abspath(__file__))`) so execution does not fail when invoked from outside the project root.
-3. **Streamlit Health**:
+3. **Static Web Parity** (after touching `core.py`, `indexer.py` prompts, `i18n.py` or `web/`):
+   - `python export_web.py --golden && (cd web && npm test)`
+   - Optional, in a browser: `(cd web && npm run test:browser)`
+4. **Streamlit Health**:
    - If running in tmux (`nerdsight/main`), verify port `8501` responds with HTTP 200:
      `curl -sI http://localhost:8501 | head -n 5`

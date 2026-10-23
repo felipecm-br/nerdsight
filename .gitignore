@@ -15,6 +15,13 @@ assets/*
 !assets/.gitkeep
 data/*
 !data/.gitkeep
+static/*
+!static/.gitkeep
+
+# Static web front end: export_web.py output, test golden set, npm packages
+web/dist/
+web/tests/golden/
+web/node_modules/
 
 # IDE / OS specific files
 .DS_Store
@@ -24,5 +31,5 @@ data/*
 *.swo
 *~
 
-# Streamlit local settings
-.streamlit/
+# Streamlit local secrets (config.toml holds the theme and is committed)
+.streamlit/secrets.toml
